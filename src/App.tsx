@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, Search, LogOut, User, Smile, Image as ImageIcon, CheckCheck, Copy, Users, MessageSquare } from "lucide-react";
+import { Send, Search, LogOut, User, Smile, Image as ImageIcon, CheckCheck, Copy, Users, MessageSquare, ArrowLeft, Camera } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   auth, 
@@ -17,6 +17,9 @@ import {
   getDoc,
   limit,
   Timestamp,
+  where,
+  increment,
+  updateDoc
 } from "./firebase";
 
 // --- Types ---
@@ -35,8 +38,18 @@ interface ChatUser {
   handle: string;
   name: string;
   avatarColor: string;
+  avatarUrl?: string;
   isOnline: boolean;
   lastSeen: number;
+}
+
+interface Conversation {
+  id: string;
+  participants: string[];
+  lastMessage: string;
+  lastSender: string;
+  updatedAt: any;
+  unreadCounts: Record<string, number>;
 }
 
 const avatarColors = [
@@ -52,15 +65,18 @@ export default function App() {
   // UI States
   const [activeTab, setActiveTab] = useState<"chats" | "users">("chats");
   const [selectedUser, setSelectedUser] = useState<ChatUser | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchHandle, setSearchHandle] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showLetter, setShowLetter] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   
   // Login Flow
   const [inputHandle, setInputHandle] = useState("");
   const [inputName, setInputName] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(localStorage.getItem("echochat_avatar"));
 
   // Chat Data
   const [message, setMessage] = useState("");
@@ -112,6 +128,26 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
+  // Fetch Conversations (Inbox)
+  useEffect(() => {
+    if (!user || !myHandle) return;
+
+    const q = query(
+      collection(db, "conversations"),
+      where("participants", "array-contains", myHandle),
+      orderBy("updatedAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Conversation));
+      setConversations(list);
+    }, (error) => {
+      console.error("Conversations sync error:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user, myHandle]);
+
   // Fetch Private Messages
   useEffect(() => {
     if (!user || !myHandle || !selectedUser) {
@@ -142,6 +178,31 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Clear unread count when viewing a chat
+  useEffect(() => {
+    if (user && myHandle && selectedUser) {
+      const convId = [myHandle, selectedUser.handle].sort().join("_");
+      const convRef = doc(db, "conversations", convId);
+      
+      const clearUnread = async () => {
+        try {
+          const snap = await getDoc(convRef);
+          if (snap.exists()) {
+            const data = snap.data() as Conversation;
+            if (data.unreadCounts?.[myHandle] > 0) {
+              await updateDoc(convRef, {
+                [`unreadCounts.${myHandle}`]: 0
+              });
+            }
+          }
+        } catch (e) {
+          console.warn("Could not clear unread count:", e);
+        }
+      };
+      clearUnread();
+    }
+  }, [selectedUser, myHandle, user]);
 
   // --- 3. Handlers ---
   const handleRegister = async (e: React.FormEvent) => {
@@ -209,6 +270,7 @@ export default function App() {
     const convId = [myHandle, selectedUser.handle].sort().join("_");
 
     try {
+      // 1. Add Message
       await addDoc(collection(db, "conversations", convId, "messages"), {
         senderId: myHandle,
         senderName: myName,
@@ -217,6 +279,17 @@ export default function App() {
         timestamp: serverTimestamp(),
         type: "text"
       });
+
+      // 2. Update Conversation Summary
+      const convRef = doc(db, "conversations", convId);
+      await setDoc(convRef, {
+        participants: [myHandle, selectedUser.handle],
+        lastMessage: text,
+        lastSender: myHandle,
+        updatedAt: serverTimestamp(),
+        [`unreadCounts.${selectedUser.handle}`]: increment(1)
+      }, { merge: true });
+
     } catch (err) {
       console.error("Failed to send message:", err);
     }
@@ -248,6 +321,30 @@ export default function App() {
   const handleLogout = () => {
     localStorage.clear();
     window.location.reload();
+  };
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && myHandle) {
+      if (file.size > 200000) { // 200KB limit for base64 storage
+        alert("Image is too large. Please use a smaller photo (max 200KB).");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = reader.result as string;
+        try {
+          const userRef = doc(db, "users", myHandle);
+          await setDoc(userRef, { avatarUrl: base64 }, { merge: true });
+          setMyAvatarUrl(base64);
+          localStorage.setItem("echochat_avatar", base64);
+          alert("Profile photo updated!");
+        } catch (err) {
+          console.error("Photo upload failed:", err);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const getInitials = (n: string) => n.split(" ").map(x => x[0]).join("").toUpperCase().substring(0, 2);
@@ -325,87 +422,206 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <aside className={`sidebar flex flex-col ${isSidebarOpen ? 'open' : ''}`}>
-        <div className="sidebar-header">
+      <aside className={`sidebar flex flex-col ${selectedUser ? 'hidden md:flex' : 'flex'}`}>
+        <div className="sidebar-header bg-[#f0f2f5] px-4 py-2 border-b border-gray-200">
           <div className="flex items-center gap-3">
-             <div className="avatar bg-indigo-600 text-white">{getInitials(myName || "")}</div>
+             <div className="relative group">
+                {myAvatarUrl ? (
+                  <img src={myAvatarUrl} alt="Me" className="w-10 h-10 rounded-full object-cover ring-1 ring-gray-200" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gray-400 flex items-center justify-center text-white text-sm font-bold">
+                    {getInitials(myName || "")}
+                  </div>
+                )}
+                <label className="absolute inset-0 bg-black/20 rounded-full opacity-0 hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity">
+                  <Camera size={14} className="text-white" />
+                  <input type="file" accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                </label>
+             </div>
              <div className="flex flex-col">
-                <span className="font-bold text-sm text-gray-900">{myName}</span>
-                <span className="text-[10px] text-gray-400">@{myHandle}</span>
+                <span className="font-semibold text-sm text-[#111b21]">{myName}</span>
+                <span className="text-[11px] text-[#667781]">@{myHandle}</span>
              </div>
           </div>
-          <div className="flex gap-1 ml-auto">
-             <button onClick={copyMyId} className="p-2 hover:bg-indigo-50 rounded-full text-indigo-600 transition-colors" title="Copy My ID">
-                <Copy size={18} />
+          <div className="flex gap-2 text-[#54656f]">
+             <button onClick={copyMyId} className="p-2 hover:bg-black/5 rounded-full" title="Copy ID">
+                <Copy size={20} />
              </button>
-             <button onClick={handleLogout} className="p-2 hover:bg-red-50 rounded-full text-red-400 transition-colors" title="Logout">
-                <LogOut size={18} />
+             <button onClick={handleLogout} className="p-2 hover:bg-black/5 rounded-full" title="Logout">
+                <LogOut size={20} />
              </button>
           </div>
         </div>
 
-        <div className="px-4 pb-4">
-           <form onSubmit={findUserByHandle} className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-              <input 
-                type="text" 
-                value={searchHandle}
-                onChange={(e) => setSearchHandle(e.target.value)}
-                placeholder="Find by ID (e.g. kavidu)" 
-                className="search-input pl-10 h-10 text-xs" 
-              />
-           </form>
+        <div className="bg-white p-2">
+           <div className={`flex items-center gap-4 bg-[#f0f2f5] px-4 py-1.5 rounded-lg transition-all ${isSearching ? 'ring-1 ring-wa-teal' : ''}`}>
+              <Search size={16} className={isSearching ? 'text-wa-teal' : 'text-[#54656f]'} />
+              <form onSubmit={findUserByHandle} className="flex-1">
+                <input 
+                  type="text" 
+                  value={searchHandle}
+                  onFocus={() => setIsSearching(true)}
+                  onBlur={() => setIsSearching(false)}
+                  onChange={(e) => setSearchHandle(e.target.value)}
+                  placeholder="Search or start new chat" 
+                  className="w-full bg-transparent border-none text-[14px] py-1 placeholder:text-[#667781] focus:ring-0" 
+                />
+              </form>
+           </div>
         </div>
 
-        <div className="flex border-b border-gray-100 mb-2">
-           <button onClick={() => setActiveTab('chats')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'chats' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}>
-              <div className="flex items-center justify-center gap-2"><Send size={12} /> Chats</div>
+        <div className="flex bg-white">
+           <button onClick={() => setActiveTab('chats')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'chats' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
+              CHATS
            </button>
-           <button onClick={() => setActiveTab('users')} className={`flex-1 py-3 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeTab === 'users' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}>
-              <div className="flex items-center justify-center gap-2"><Users size={12} /> Explore</div>
+           <button onClick={() => setActiveTab('users')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'users' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
+              EXPLORE
            </button>
         </div>
 
         <div className="user-list">
           {activeTab === 'users' ? (
             allUsers.filter(u => u.handle !== myHandle).map(u => (
-              <motion.div key={u.id} layout onClick={() => { setSelectedUser(u); setIsSidebarOpen(false); }} className="user-item">
+              <motion.div 
+                key={u.id} 
+                layout 
+                onClick={() => { setSelectedUser(u); setActiveTab('chats'); }} 
+                className={`user-item ${selectedUser?.handle === u.handle ? 'active' : ''}`}
+              >
                 <div className="relative">
-                  <div className="avatar" style={{ backgroundColor: u.avatarColor }}>{getInitials(u.name)}</div>
-                  {u.isOnline && <div className="status-dot absolute bottom-0 right-0 border-2 border-white" />}
+                  {u.avatarUrl ? (
+                    <img src={u.avatarUrl} alt={u.name} className="avatar object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="avatar" style={{ backgroundColor: u.avatarColor }}>{getInitials(u.name)}</div>
+                  )}
+                  {u.isOnline && <div className="status-dot absolute bottom-0 right-0" />}
                 </div>
                 <div className="flex-1">
-                  <div className="font-bold text-sm text-gray-900">{u.name}</div>
-                  <div className="text-[10px] text-gray-400">@{u.handle}</div>
+                  <div className="font-semibold text-[16px] text-[#111b21]">{u.name}</div>
+                  <div className="text-[13px] text-[#667781]">@{u.handle}</div>
                 </div>
               </motion.div>
             ))
           ) : (
-            <div className="flex flex-col items-center justify-center flex-1 text-center p-8 opacity-40">
-               <MessageSquare size={48} className="mb-4 text-indigo-200" />
-               <p className="text-xs font-medium">Select a user to start chatting</p>
-            </div>
+            conversations.length > 0 ? (
+              conversations.map(conv => {
+                const otherHandle = conv.participants.find(p => p !== myHandle);
+                const otherUser = allUsers.find(u => u.handle === otherHandle);
+                const unreadCount = conv.unreadCounts?.[myHandle || ""] || 0;
+                
+                if (!otherUser && !otherHandle) return null;
+
+                return (
+                  <motion.div 
+                    key={conv.id} 
+                    layout 
+                    onClick={() => { 
+                      if (otherUser) setSelectedUser(otherUser);
+                      else if (otherHandle) {
+                        const resolve = async () => {
+                           const snap = await getDoc(doc(db, "users", otherHandle));
+                           if (snap.exists()) setSelectedUser(snap.data() as ChatUser);
+                        };
+                        resolve();
+                      }
+                    }} 
+                    className={`user-item ${selectedUser?.handle === otherHandle ? 'active' : ''}`}
+                  >
+                    <div className="relative">
+                      {otherUser?.avatarUrl ? (
+                        <img src={otherUser.avatarUrl} alt="User" className="avatar object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="avatar" style={{ backgroundColor: otherUser?.avatarColor || "#cbd5e1" }}>
+                          {getInitials(otherUser?.name || otherHandle || "??")}
+                        </div>
+                      )}
+                      {otherUser?.isOnline && <div className="status-dot absolute bottom-0 right-0" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start mb-0.5">
+                        <div className="font-semibold text-[16px] text-[#111b21] truncate pr-2">{otherUser?.name || otherHandle}</div>
+                        {conv.updatedAt && (
+                          <span className={`text-[12px] whitespace-nowrap mt-1 ${unreadCount > 0 ? 'text-[#1fa855] font-semibold' : 'text-[#667781]'}`}>
+                            {new Date(conv.updatedAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <p className={`text-[13px] truncate flex-1 ${unreadCount > 0 ? 'text-[#111b21] font-medium' : 'text-[#667781]'}`}>
+                          {conv.lastSender === myHandle ? (
+                            <span className="flex items-center gap-1">
+                               <CheckCheck size={14} className="text-[#53bdeb] inline" /> {conv.lastMessage}
+                            </span>
+                          ) : conv.lastMessage}
+                        </p>
+                        {unreadCount > 0 && (
+                          <span className="bg-[#25d366] text-white min-w-[20px] h-[20px] flex items-center justify-center rounded-full text-[11px] font-bold px-1 ml-2 shadow-sm">
+                             {unreadCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })
+            ) : (
+              <div className="flex flex-col items-center justify-center flex-1 text-center p-12 text-[#667781]">
+                <MessageSquare size={54} className="mb-4 opacity-10" />
+                <p className="text-sm">Tap on Explore to find friends and start chatting!</p>
+              </div>
+            )
           )}
+          
+          {activeTab === 'chats' && (
+             <button 
+               onClick={() => setActiveTab('users')}
+               className="fixed bottom-20 right-6 md:absolute md:bottom-12 md:right-6 w-14 h-14 bg-wa-teal rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all z-20"
+             >
+                <MessageSquare size={24} />
+             </button>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-50 bg-gray-50/30">
+          <div className="text-center text-[10px] font-bold text-gray-300 uppercase tracking-[0.2em]">
+            kavix coding
+          </div>
         </div>
       </aside>
 
-      <main className="chat-area">
+      <main className={`chat-area ${!selectedUser ? 'hidden md:flex' : 'flex'}`}>
         <header className="chat-header">
-           <button onClick={() => setIsSidebarOpen(true)} className="md:hidden p-2 text-indigo-600"><Users size={24} /></button>
-           {selectedUser ? (
-             <div className="flex items-center gap-3">
-                <div className="avatar w-10 h-10 ring-2 ring-indigo-50" style={{ backgroundColor: selectedUser.avatarColor }}>{getInitials(selectedUser.name)}</div>
-                <div>
-                   <div className="font-bold text-gray-900 leading-tight">{selectedUser.name}</div>
-                   <div className="text-[10px] text-indigo-500 font-bold uppercase tracking-tighter">@{selectedUser.handle}</div>
-                </div>
-             </div>
-           ) : (
-             <div className="font-bold text-gray-400 italic">Select a conversation</div>
+           <div className="flex items-center gap-1.5 min-w-0 flex-1">
+             <button 
+               onClick={() => setSelectedUser(null)} 
+               className="md:hidden p-2 -ml-2 text-[#54656f] hover:bg-black/5 rounded-full"
+             >
+               <ArrowLeft size={20} />
+             </button>
+             
+             {selectedUser && (
+               <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {selectedUser.avatarUrl ? (
+                    <img src={selectedUser.avatarUrl} alt="User" className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ backgroundColor: selectedUser.avatarColor }}>{getInitials(selectedUser.name)}</div>
+                  )}
+                  <div className="min-w-0">
+                     <div className="font-semibold text-[#111b21] truncate">{selectedUser.name}</div>
+                     <div className="text-[12px] text-[#667781] truncate">
+                        {selectedUser.isOnline ? "online" : "last seen recently"}
+                     </div>
+                  </div>
+               </div>
+             )}
+           </div>
+           
+           {!selectedUser && (
+             <div className="hidden md:block font-medium text-[#667781]">WhatsApp Clone</div>
            )}
         </header>
 
-        <div className="messages-container">
+        <div className="messages-container pb-24">
           {selectedUser ? (
             <AnimatePresence mode="popLayout" initial={false}>
               {messages.map((msg) => (
@@ -430,20 +646,21 @@ export default function App() {
           )}
         </div>
 
-        {selectedUser && (
-          <div className="input-area-wrapper p-4 bg-white/80 backdrop-blur-md">
-            <form onSubmit={handleSendMessage} className="input-area max-w-4xl mx-auto flex gap-2">
-               <div className="flex-1 bg-gray-50 rounded-2xl border border-gray-100 flex items-center px-4">
-                  <textarea 
-                    rows={1}
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Write a message..."
-                    className="flex-1 bg-transparent py-3 text-sm focus:ring-0 border-none resize-none"
-                    onKeyDown={(e) => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); }}}
-                  />
-               </div>
-               <button type="submit" disabled={!message.trim()} className="send-btn bg-indigo-600 shadow-indigo-100 shadow-xl disabled:bg-gray-100"><Send size={20} /></button>
+      {selectedUser && (
+          <div className="input-area-wrapper">
+            <button className="text-[#54656f] p-2 hover:bg-black/5 rounded-full"><Smile size={24} /></button>
+            <form onSubmit={handleSendMessage} className="flex-1 flex gap-2 items-center">
+               <textarea 
+                 rows={1}
+                 value={message}
+                 onChange={(e) => setMessage(e.target.value)}
+                 placeholder="Type a message"
+                 className="flex-1"
+                 onKeyDown={(e) => { if(e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); }}}
+               />
+               <button type="submit" disabled={!message.trim()} className="send-btn">
+                  <Send size={24} className={message.trim() ? 'text-wa-teal' : 'text-[#8696a0]'} />
+               </button>
             </form>
           </div>
         )}

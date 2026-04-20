@@ -20,7 +20,10 @@ import {
   getDoc,
   limit,
   Timestamp,
-  deleteDoc
+  deleteDoc,
+  where,
+  increment,
+  updateDoc
 } from 'firebase/firestore';
 // @ts-ignore
 import firebaseConfig from '../firebase-applet-config.json';
@@ -51,5 +54,8 @@ export {
   getDoc,
   limit,
   Timestamp,
-  deleteDoc
+  deleteDoc,
+  where,
+  increment,
+  updateDoc
 };

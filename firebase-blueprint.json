@@ -38,6 +38,18 @@
         "name": { "type": "string" },
         "lastActive": { "type": "number" }
       }
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Metadata for a chat between two users",
+      "type": "object",
+      "properties": {
+        "participants": { "type": "array" },
+        "lastMessage": { "type": "string" },
+        "lastSender": { "type": "string" },
+        "updatedAt": { "type": "number" },
+        "unreadCounts": { "type": "object" }
+      }
     }
   },
   "firestore": {
@@ -45,9 +57,13 @@
       "schema": "User",
       "description": "Users keyed by their unique permanent handle"
     },
+    "/conversations/{convId}": {
+      "schema": "Conversation",
+      "description": "Metadata for a private chat"
+    },
     "/conversations/{convId}/messages/{messageId}": {
       "schema": "Message",
-      "description": "Private messages between two users. convId is alphabetical: handle1_handle2"
+      "description": "Physical messages in a conversation"
     },
     "/presence/{handle}": {
       "schema": "Presence",
