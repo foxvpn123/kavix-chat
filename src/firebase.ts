@@ -41,7 +41,8 @@ export const auth = getAuth(app);
 
 // Enable offline persistence for better mobile APK performance
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+  experimentalForceLongPolling: true // Force long-polling to avoid WebSocket hangs on mobile networks
 }, firebaseConfig.firestoreDatabaseId || "(default)");
 
 export { 

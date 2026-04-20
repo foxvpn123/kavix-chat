@@ -76,6 +76,7 @@ export default function App() {
   const [inputName, setInputName] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [registrationTask, setRegistrationTask] = useState<string>("");
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(localStorage.getItem("echochat_avatar"));
 
   // Chat Data
@@ -230,15 +231,18 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
-    // Safety timeout for mobile connectivity issues
+    // Increase timeout for slow mobile networks (15 seconds)
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Connection timeout. Please check your internet and try again.")), 8000)
+      setTimeout(() => reject(new Error("Connection is very slow. Please move to a better area or check your internet.")), 15000)
     );
 
     try {
+      setRegistrationTask("Verifying network...");
+      console.log("Starting registration for handle:", handle);
       const userRef = doc(db, "users", handle);
       
-      // Wrap DB call with timeout for mobile (APK) stability
+      // Attempt to communicate with server
+      setRegistrationTask("Checking if handle is unique...");
       const userSnap = await Promise.race([
         getDoc(userRef),
         timeoutPromise
@@ -250,16 +254,23 @@ export default function App() {
         return;
       }
 
+      setRegistrationTask("Creating your profile...");
       const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
-      await setDoc(userRef, {
-        id: user?.uid || "guest",
+      const profileData = {
+        id: user?.uid || "guest_" + Math.random().toString(36).substr(2, 9),
         handle,
         name,
         avatarColor: color,
         isOnline: true,
         lastSeen: Date.now()
-      });
+      };
 
+      await Promise.race([
+        setDoc(userRef, profileData),
+        timeoutPromise
+      ]);
+
+      console.log("Registration successful!");
       localStorage.setItem("echochat_handle", handle);
       localStorage.setItem("echochat_username", name);
       localStorage.setItem("echochat_color", color);
@@ -272,7 +283,10 @@ export default function App() {
         setShowLetter(true);
       }
     } catch (err: any) {
-      setAuthError(err.message || "Registration failed");
+      console.error("CRITICAL REGISTRATION ERROR:", err);
+      // Detailed error for debugging on phone
+      const errorMsg = err.code ? `Error: ${err.code} - ${err.message}` : err.message;
+      setAuthError(errorMsg || "Registration failed. Check network.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -409,11 +423,29 @@ export default function App() {
                 disabled={isAuthLoading}
                 className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 active:scale-95 disabled:opacity-50"
               >
-                {isAuthLoading ? "Registering..." : "Join EchoChat"}
+                {isAuthLoading ? (registrationTask || "CONNECTING...") : "JOIN THE CHAT"}
               </button>
+
+              {isAuthLoading && registrationTask && (
+                <div className="flex flex-col items-center gap-2 mt-2">
+                  <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                  <p className="text-[10px] text-indigo-400 font-medium uppercase tracking-widest animate-pulse">
+                    {registrationTask}
+                  </p>
+                </div>
+              )}
             </form>
           </div>
         </motion.div>
+
+        {isAuthLoading && (
+          <button 
+            onClick={() => window.location.reload()}
+            className="fixed bottom-10 left-1/2 -translate-x-1/2 text-gray-400 text-xs underline decoration-gray-300 underline-offset-4"
+          >
+            Taking too long? Try Refreshing
+          </button>
+        )}
       </div>
     );
   }
