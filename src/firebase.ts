@@ -40,10 +40,13 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
 // Enable offline persistence for better mobile APK performance
+const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim() !== "") 
+  ? firebaseConfig.firestoreDatabaseId 
+  : "(default)";
+
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-  experimentalForceLongPolling: true // Force long-polling to avoid WebSocket hangs on mobile networks
-}, firebaseConfig.firestoreDatabaseId || "(default)");
+  localCache: persistentLocalCache({}) 
+}, dbId);
 
 export { 
   signInAnonymously, 

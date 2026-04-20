@@ -87,10 +87,17 @@ export default function App() {
 
   // --- 1. Authentication & Presence ---
   useEffect(() => {
+    console.log("Firebase Auth initializing...");
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      if (!u) {
-        signInAnonymously(auth).catch(console.error);
+      if (u) {
+        console.log("Authenticated as:", u.uid);
+        setUser(u);
+      } else {
+        console.log("No user session, signing in anonymously...");
+        signInAnonymously(auth).catch(err => {
+          console.error("Auth failed:", err);
+          setAuthError("Failed to connect to Secure Server. Please check internet.");
+        });
       }
     });
     return () => unsubscribe();
@@ -231,18 +238,28 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
-    // Increase timeout for slow mobile networks (15 seconds)
+    // Increase timeout for slow mobile networks (30 seconds)
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Connection is very slow. Please move to a better area or check your internet.")), 15000)
+      setTimeout(() => reject(new Error("Connection is very slow. Please move to a better area (LTE/WiFi) and try again.")), 30000)
     );
 
     try {
-      setRegistrationTask("Verifying network...");
+      setRegistrationTask("Initializing Secure Link...");
+      
+      // Wait for auth to be ready if it isn't yet
+      if (!user) {
+        console.log("Auth not ready, waiting...");
+        let attempts = 0;
+        while (!auth.currentUser && attempts < 10) {
+          await new Promise(r => setTimeout(r, 1000));
+          attempts++;
+        }
+      }
+
       console.log("Starting registration for handle:", handle);
       const userRef = doc(db, "users", handle);
       
-      // Attempt to communicate with server
-      setRegistrationTask("Checking if handle is unique...");
+      setRegistrationTask("Verifying Unique ID...");
       const userSnap = await Promise.race([
         getDoc(userRef),
         timeoutPromise
@@ -390,8 +407,9 @@ export default function App() {
               <MessageSquare size={40} />
             </div>
             <div className="text-center">
-              <h2 className="text-3xl font-black text-gray-900 tracking-tight">Create Identity</h2>
+              <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
+              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.4 Optimized</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">
@@ -665,8 +683,8 @@ export default function App() {
              )}
            </div>
            
-           {!selectedUser && (
-             <div className="hidden md:block font-medium text-[#667781]">WhatsApp Clone</div>
+            {!selectedUser && (
+             <div className="hidden md:block font-bold text-wa-teal tracking-wider text-xl">IXO</div>
            )}
         </header>
 
