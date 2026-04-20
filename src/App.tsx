@@ -120,7 +120,11 @@ export default function App() {
     if (!user) return;
     const q = query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(50));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ChatUser));
+      const list = snapshot.docs.map(d => {
+        const data = d.data();
+        // Force id to be d.id (the handle) to avoid UID duplicates
+        return { ...data, id: d.id } as ChatUser;
+      });
       setAllUsers(list);
     }, (error) => {
       console.error("Users list sync error:", error);
@@ -139,7 +143,10 @@ export default function App() {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Conversation));
+      const list = snapshot.docs.map(d => {
+        const data = d.data();
+        return { ...data, id: d.id } as Conversation;
+      });
       setConversations(list);
     }, (error) => {
       console.error("Conversations sync error:", error);
@@ -223,9 +230,19 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
+    // Safety timeout for mobile connectivity issues
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error("Connection timeout. Please check your internet and try again.")), 8000)
+    );
+
     try {
       const userRef = doc(db, "users", handle);
-      const userSnap = await getDoc(userRef);
+      
+      // Wrap DB call with timeout for mobile (APK) stability
+      const userSnap = await Promise.race([
+        getDoc(userRef),
+        timeoutPromise
+      ]) as any;
 
       if (userSnap.exists()) {
         setAuthError("This ID is already taken. Try another one!");
@@ -235,7 +252,7 @@ export default function App() {
 
       const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
       await setDoc(userRef, {
-        id: user?.uid || "",
+        id: user?.uid || "guest",
         handle,
         name,
         avatarColor: color,
@@ -483,7 +500,7 @@ export default function App() {
           {activeTab === 'users' ? (
             allUsers.filter(u => u.handle !== myHandle).map(u => (
               <motion.div 
-                key={u.id} 
+                key={u.handle} 
                 layout 
                 onClick={() => { setSelectedUser(u); setActiveTab('chats'); }} 
                 className={`user-item ${selectedUser?.handle === u.handle ? 'active' : ''}`}

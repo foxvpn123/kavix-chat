@@ -23,7 +23,10 @@ import {
   deleteDoc,
   where,
   increment,
-  updateDoc
+  updateDoc,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager
 } from 'firebase/firestore';
 // @ts-ignore
 import firebaseConfig from '../firebase-applet-config.json';
@@ -35,7 +38,11 @@ if (!firebaseConfig.authDomain) {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+// Enable offline persistence for better mobile APK performance
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+}, firebaseConfig.firestoreDatabaseId || "(default)");
 
 export { 
   signInAnonymously, 

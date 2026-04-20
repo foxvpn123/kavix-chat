@@ -2,26 +2,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Catch-all allow for development (as requested by user for custom ID system)
+    // Catch-all wide access for rapid development and mobile (APK) compatibility.
+    // Handles are validated on the client and stored in Firestore for a unique ID system.
     match /{document=**} {
       allow read, write: if true;
     }
 
-    // Basic guards to prevent junk data (even if public)
-    match /users/{handle} {
-      function isValidId(id) {
-        return id is string && id.size() >= 3 && id.size() <= 20 && id.matches('^[a-z0-9_]+$');
-      }
-      
-      allow create: if isValidId(handle) 
-        && request.resource.data.handle == handle
-        && !exists(/databases/$(database)/documents/users/$(handle));
-        
-      allow update: if request.resource.data.handle == handle;
-    }
-
-    match /conversations/{convId}/messages/{messageId} {
-      allow create: if request.resource.data.text.size() <= 2000;
-    }
   }
 }
