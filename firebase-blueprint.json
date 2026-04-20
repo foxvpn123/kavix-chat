@@ -41,17 +41,17 @@
     }
   },
   "firestore": {
-    "/users/{userId}": {
+    "/users/{handle}": {
       "schema": "User",
-      "description": "Registered users"
+      "description": "Users keyed by their unique permanent handle"
     },
-    "/messages/{messageId}": {
+    "/conversations/{convId}/messages/{messageId}": {
       "schema": "Message",
-      "description": "Global chat messages"
+      "description": "Private messages between two users. convId is alphabetical: handle1_handle2"
     },
-    "/rooms/{roomId}/typing/{userId}": {
+    "/presence/{handle}": {
       "schema": "Presence",
-      "description": "Typing indicators"
+      "description": "Global presence tracking"
     }
   }
 }
