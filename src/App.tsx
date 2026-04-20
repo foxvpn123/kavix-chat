@@ -260,8 +260,8 @@ export default function App() {
       const userRef = doc(db, "users", currentHandle);
       
       setRegistrationTask("Verifying Unique Handle...");
-      // Using standard getDoc - Firebase will retry internally if network is shaky
-      const userSnap = await getDoc(userRef);
+      // Using getDocFromServer to force direct network check, bypassing stale cache
+      const userSnap = await getDocFromServer(userRef);
 
       if (userSnap.exists()) {
         setAuthError("This ID is already taken. Try another one!");
@@ -296,8 +296,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("CRITICAL REGISTRATION ERROR:", err);
-      // Detailed error for debugging on phone - v1.0.8 simplified
-      const errorMsg = err.code ? `[Code: ${err.code}] ${err.message}` : (err.message || "Connection error. Check signal.");
+      // v1.0.9 PRO-MOBILE: Showing raw firebase errors for debugging
+      const errorMsg = err.code ? `[Firebase Error Code: ${err.code}] ${err.message}` : (err.message || "Network error. Please try again.");
       setAuthError(errorMsg);
     } finally {
       setIsAuthLoading(false);
@@ -404,7 +404,7 @@ export default function App() {
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.8 Clean-BUILD</p>
+              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.9 PRO-MOBILE</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">
