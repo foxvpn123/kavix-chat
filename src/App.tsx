@@ -239,37 +239,29 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
-    // Maximum timeout for mobile networks (60 seconds)
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Database response took too long. This usually happens on slow 3G/LTE or restricted WiFi.")), 60000)
-    );
-
     try {
-      setRegistrationTask("Initiating Secure Session...");
+      setRegistrationTask("Connecting to IXO Network...");
       
-      // Wait for auth to be strictly ready
+      // Ensure we have an auth session, try to sign in if not
       if (!auth.currentUser) {
-        console.log("Waiting for Auth...");
-        let attempts = 0;
-        while (!auth.currentUser && attempts < 15) {
-          await new Promise(r => setTimeout(r, 1000));
-          attempts++;
+        console.log("No current user, initiating anonymous sign-in...");
+        await signInAnonymously(auth);
+        
+        // Brief wait for state propagation
+        let waitAttempts = 0;
+        while (!auth.currentUser && waitAttempts < 5) {
+          await new Promise(r => setTimeout(r, 500));
+          waitAttempts++;
         }
-      }
-
-      if (!auth.currentUser) {
-        throw new Error("Unable to connect to the Secure Link. Please ensure your Internet/Data is on and try again.");
       }
 
       const currentHandle = handle.toLowerCase().trim();
       console.log("Starting registration for:", currentHandle);
       const userRef = doc(db, "users", currentHandle);
       
-      setRegistrationTask("Verifying Handle...");
-      const userSnap = await Promise.race([
-        getDocFromServer(userRef),
-        timeoutPromise
-      ]) as any;
+      setRegistrationTask("Verifying Unique Handle...");
+      // Using standard getDoc - Firebase will retry internally if network is shaky
+      const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
         setAuthError("This ID is already taken. Try another one!");
@@ -288,10 +280,7 @@ export default function App() {
         lastSeen: Date.now()
       };
 
-      await Promise.race([
-        setDoc(userRef, profileData),
-        timeoutPromise
-      ]);
+      await setDoc(userRef, profileData);
 
       console.log("Registration successful!");
       localStorage.setItem("echochat_handle", handle);
@@ -307,8 +296,8 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("CRITICAL REGISTRATION ERROR:", err);
-      // Detailed error for debugging on phone - v1.0.7 adds code check
-      const errorMsg = err.code ? `[Code: ${err.code}] ${err.message}` : (err.message || "Something went wrong.");
+      // Detailed error for debugging on phone - v1.0.8 simplified
+      const errorMsg = err.code ? `[Code: ${err.code}] ${err.message}` : (err.message || "Connection error. Check signal.");
       setAuthError(errorMsg);
     } finally {
       setIsAuthLoading(false);
@@ -415,7 +404,7 @@ export default function App() {
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.7 Extreme-FORCE</p>
+              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.8 Clean-BUILD</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">

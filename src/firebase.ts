@@ -39,14 +39,12 @@ if (!firebaseConfig.authDomain) {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Enable ultra-stable connection for mobile APKs
+// Use the simplest Firestore initialization for maximum compatibility
 const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim() !== "") 
   ? firebaseConfig.firestoreDatabaseId 
-  : "(default)";
+  : undefined;
 
-export const db = initializeFirestore(app, {
-  localCache: memoryLocalCache() // Avoid disk I/O hangs on mobile devices
-}, dbId);
+export const db = getFirestore(app, dbId);
 
 export { 
   signInAnonymously, 
