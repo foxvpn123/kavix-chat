@@ -48,6 +48,7 @@ const avatarColors = [
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [userName, setUserName] = useState<string | null>(() => {
     try {
       // Defensive cleanup
@@ -82,20 +83,26 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
         setUser(u);
-        const effectiveName = userName || u.displayName || localStorage.getItem("echochat_username");
+        const savedName = localStorage.getItem("echochat_username");
+        const effectiveName = userName || u.displayName || savedName;
         
         if (effectiveName) {
           if (!userName) setUserName(effectiveName);
+          if (!savedName) localStorage.setItem("echochat_username", effectiveName);
           
-          // Update profile in Firestore
-          const userRef = doc(db, "users", u.uid);
-          await setDoc(userRef, {
-            id: u.uid,
-            name: effectiveName,
-            lastSeen: Date.now(),
-            isOnline: true,
-            avatarColor: localStorage.getItem("echochat_color") || avatarColors[Math.floor(Math.random() * avatarColors.length)]
-          }, { merge: true });
+          try {
+            // Update profile in Firestore
+            const userRef = doc(db, "users", u.uid);
+            await setDoc(userRef, {
+              id: u.uid,
+              name: effectiveName,
+              lastSeen: Date.now(),
+              isOnline: true,
+              avatarColor: localStorage.getItem("echochat_color") || avatarColors[Math.floor(Math.random() * avatarColors.length)]
+            }, { merge: true });
+          } catch (e) {
+            console.warn("Could not sync user profile to Firestore (check rules/quota):", e);
+          }
         }
       } else {
         setUser(null);
@@ -191,8 +198,13 @@ export default function App() {
   };
 
   const handleGoogleSignIn = async () => {
+    if (isAuthLoading) return;
     setAuthError(null);
+    setIsAuthLoading(true);
+
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+
     try {
       const result = await signInWithPopup(auth, provider);
       const user = result.user;
@@ -216,14 +228,17 @@ export default function App() {
       
       if (err.code === 'auth/popup-blocked') {
         setAuthError("Popup blocked! Please allow popups for this site in your browser settings to sign in with Google.");
-      } else if (err.code === 'auth/cancelled-popup-request') {
-        // Silently ignore or show a subtle message
-        console.log("Popup request was cancelled by a newer request or closed by user.");
-      } else if (err.code === 'auth/popup-closed-by-user') {
-        setAuthError("Sign-in popup was closed before completion.");
+      } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
+        setAuthError("Sign-in process was cancelled. Please try again.");
+      } else if (err.code === 'auth/operation-not-allowed') {
+        setAuthError("Google Sign-in is not enabled in your Firebase console. Please go to Auth > Sign-in method and enable Google.");
+      } else if (err.code === 'auth/auth-domain-config-required') {
+        setAuthError("Firebase Auth Domain missing! Please ensure your project is fully provisioned.");
       } else {
         setAuthError(err.message || "An error occurred during Google Sign-in.");
       }
+    } finally {
+      setIsAuthLoading(false);
     }
   };
 
@@ -308,10 +323,15 @@ export default function App() {
 
             <button 
               onClick={handleGoogleSignIn}
-              className="w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm"
+              disabled={isAuthLoading}
+              className={`w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm ${isAuthLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20" alt="Google" referrerPolicy="no-referrer" />
-              Continue with Google
+              {isAuthLoading ? (
+                <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20" alt="Google" referrerPolicy="no-referrer" />
+              )}
+              {isAuthLoading ? "Connecting..." : "Continue with Google"}
             </button>
 
             <div className="flex items-center gap-4 w-full">

@@ -25,6 +25,11 @@ import {
 // @ts-ignore
 import firebaseConfig from '../firebase-applet-config.json';
 
+// Diagnostic check for common setup issues
+if (!firebaseConfig.authDomain) {
+  console.warn("Firebase Auth Domain is missing in config. Google Sign-in may not work until provisioned.");
+}
+
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
