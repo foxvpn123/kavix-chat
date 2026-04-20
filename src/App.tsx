@@ -1,7 +1,26 @@
 import React, { useState, useEffect, useRef } from "react";
-import { io, Socket } from "socket.io-client";
-import { Send, Search, Settings, MoreVertical, LogOut, User } from "lucide-react";
+import { Send, Search, Settings, MoreVertical, LogOut, User, Smile, Image as ImageIcon, Check, CheckCheck } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { 
+  auth, 
+  db, 
+  signInAnonymously, 
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged, 
+  updateProfile,
+  collection,
+  addDoc,
+  query,
+  orderBy,
+  onSnapshot,
+  serverTimestamp,
+  doc,
+  setDoc,
+  limit,
+  Timestamp,
+  deleteDoc
+} from "./firebase";
 
 interface Message {
   id: string;
@@ -9,65 +28,201 @@ interface Message {
   senderName: string;
   senderColor: string;
   text: string;
-  timestamp: string;
+  timestamp: any;
+  type: string;
+  imageUrl?: string;
 }
 
 interface ChatUser {
   id: string;
   name: string;
   avatarColor: string;
+  isOnline: boolean;
+  lastSeen: number;
 }
 
+const avatarColors = [
+  "#6366F1", "#EC4899", "#F59E0B", "#10B981", "#8B5CF6", "#3B82F6", "#EF4444"
+];
+
 export default function App() {
-  const [userName, setUserName] = useState<string | null>(localStorage.getItem("echochat_username"));
+  const [user, setUser] = useState<any>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string | null>(() => {
+    try {
+      // Defensive cleanup
+      const keys = ["echochat_username", "echochat_color", "echochat_seen_letter"];
+      keys.forEach(k => {
+        const val = localStorage.getItem(k);
+        if (val === "undefined" || val === "null" || val === null) {
+          localStorage.removeItem(k);
+        }
+      });
+
+      const saved = localStorage.getItem("echochat_username");
+      if (saved && saved !== "undefined" && saved !== "null") {
+        return saved;
+      }
+    } catch (e) {
+      console.error("Local storage access failed", e);
+    }
+    return null;
+  });
   const [showLetter, setShowLetter] = useState(false);
   const [inputName, setInputName] = useState("");
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [users, setUsers] = useState<ChatUser[]>([]);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [isTyping, setIsTyping] = useState(false);
+  const [isTyping, setIsTyping] = useState<Record<string, string>>({});
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Handle Auth
   useEffect(() => {
-    const newSocket = io();
-    setSocket(newSocket);
-
-    if (userName) {
-      newSocket.emit("join", userName);
-    }
-
-    newSocket.on("messageHistory", (history: Message[]) => {
-      setMessages(history);
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      if (u) {
+        setUser(u);
+        const effectiveName = userName || u.displayName || localStorage.getItem("echochat_username");
+        
+        if (effectiveName) {
+          if (!userName) setUserName(effectiveName);
+          
+          // Update profile in Firestore
+          const userRef = doc(db, "users", u.uid);
+          await setDoc(userRef, {
+            id: u.uid,
+            name: effectiveName,
+            lastSeen: Date.now(),
+            isOnline: true,
+            avatarColor: localStorage.getItem("echochat_color") || avatarColors[Math.floor(Math.random() * avatarColors.length)]
+          }, { merge: true });
+        }
+      } else {
+        setUser(null);
+      }
     });
 
-    newSocket.on("message", (msg: Message) => {
-      setMessages((prev) => [...prev, msg]);
+    return () => unsubscribe();
+  }, [userName]);
+
+  // Handle Presence and Typing
+  useEffect(() => {
+    if (!user) return;
+
+    // Set online status
+    const userRef = doc(db, "users", user.uid);
+    setDoc(userRef, { isOnline: true, lastSeen: Date.now() }, { merge: true });
+
+    // Handle offline on tab close
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        setDoc(userRef, { isOnline: false, lastSeen: Date.now() }, { merge: true });
+      } else {
+        setDoc(userRef, { isOnline: true, lastSeen: Date.now() }, { merge: true });
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      setDoc(userRef, { isOnline: false, lastSeen: Date.now() }, { merge: true });
+    };
+  }, [user]);
+
+  // Fetch Messages
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(collection(db, "messages"), orderBy("timestamp", "asc"), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Message[];
+      setMessages(msgs);
     });
 
-    newSocket.on("userList", (userList: ChatUser[]) => {
+    return () => unsubscribe();
+  }, [user]);
+
+  // Fetch User List
+  useEffect(() => {
+    if (!user) return;
+
+    const q = query(collection(db, "users"), orderBy("lastSeen", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const userList = snapshot.docs.map(doc => doc.data() as ChatUser);
       setUsers(userList);
     });
 
-    return () => {
-      newSocket.close();
-    };
-  }, [userName]);
+    return () => unsubscribe();
+  }, [user]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputName.trim()) {
-      localStorage.setItem("echochat_username", inputName.trim());
-      setUserName(inputName.trim());
+    const trimmed = inputName.trim();
+    if (trimmed && trimmed !== "undefined") {
+      const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
+      localStorage.setItem("echochat_username", trimmed);
+      localStorage.setItem("echochat_color", color);
+      setUserName(trimmed);
+      
+      try {
+        await signInAnonymously(auth);
+      } catch (err: any) {
+        console.error("Auth error:", err);
+        if (err.code === 'auth/admin-restricted-operation') {
+          setAuthError("Anonymous sign-in is disabled. Please enable it in the Firebase console or use a different auth method.");
+        } else {
+          setAuthError(err.message || "An authentication error occurred.");
+        }
+      }
+
+      // Check if user has seen the letter
+      const hasSeen = localStorage.getItem("echochat_seen_letter");
+      if (hasSeen !== "true") {
+        setShowLetter(true);
+      }
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setAuthError(null);
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      const displayName = user.displayName || "Unknown User";
+      
+      localStorage.setItem("echochat_username", displayName);
+      if (!localStorage.getItem("echochat_color")) {
+        const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
+        localStorage.setItem("echochat_color", color);
+      }
+      
+      setUserName(displayName);
       
       // Check if user has seen the letter
       const hasSeen = localStorage.getItem("echochat_seen_letter");
-      if (!hasSeen) {
+      if (hasSeen !== "true") {
         setShowLetter(true);
+      }
+    } catch (err: any) {
+      console.error("Google Auth error:", err);
+      
+      if (err.code === 'auth/popup-blocked') {
+        setAuthError("Popup blocked! Please allow popups for this site in your browser settings to sign in with Google.");
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        // Silently ignore or show a subtle message
+        console.log("Popup request was cancelled by a newer request or closed by user.");
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        setAuthError("Sign-in popup was closed before completion.");
+      } else {
+        setAuthError(err.message || "An error occurred during Google Sign-in.");
       }
     }
   };
@@ -77,25 +232,59 @@ export default function App() {
     setShowLetter(false);
   };
 
-  const handleSendMessage = (e: React.FormEvent) => {
+  const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && socket) {
-      socket.emit("sendMessage", message.trim());
+    if (message.trim() && user) {
+      const text = message.trim();
       setMessage("");
+      
+      try {
+        await addDoc(collection(db, "messages"), {
+          senderId: user.uid,
+          senderName: userName,
+          senderColor: localStorage.getItem("echochat_color") || "#6366F1",
+          text,
+          timestamp: serverTimestamp(),
+          type: "text"
+        });
+      } catch (err) {
+        console.error("Error sending message:", err);
+      }
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (user) {
+      const userRef = doc(db, "users", user.uid);
+      await setDoc(userRef, { isOnline: false, lastSeen: Date.now() }, { merge: true });
+    }
+    await auth.signOut();
     localStorage.removeItem("echochat_username");
+    localStorage.removeItem("echochat_color");
+    localStorage.removeItem("echochat_seen_letter");
     setUserName(null);
     window.location.reload();
   };
 
+  const formatTimestamp = (ts: any) => {
+    if (!ts) return "";
+    const date = ts instanceof Timestamp ? ts.toDate() : new Date(ts);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const copyInviteLink = () => {
+    // @ts-ignore
+    const url = process.env.APP_URL || window.location.origin;
+    navigator.clipboard.writeText(url);
+    alert("Invite link copied to clipboard!");
+  };
+
   const getInitials = (name: string) => {
+    if (!name) return "??";
     return name.split(" ").map(n => n[0]).join("").toUpperCase().substring(0, 2);
   };
 
-  if (!userName) {
+  if (!userName || !user) {
     return (
       <div className="login-overlay">
         <motion.div 
@@ -109,22 +298,41 @@ export default function App() {
             </div>
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900">Welcome to EchoChat</h2>
-              <p className="text-gray-500 mt-1">Enter your name to start chatting</p>
+              <p className="text-gray-500 mt-1">Join the conversation</p>
+              {authError && (
+                <div className="mt-4 p-3 bg-red-50 border border-red-100 text-red-600 text-sm rounded-xl">
+                  {authError}
+                </div>
+              )}
             </div>
+
+            <button 
+              onClick={handleGoogleSignIn}
+              className="w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20" alt="Google" referrerPolicy="no-referrer" />
+              Continue with Google
+            </button>
+
+            <div className="flex items-center gap-4 w-full">
+              <div className="h-px bg-gray-200 flex-1" />
+              <span className="text-xs font-bold text-gray-400 uppercase">Or use a guest name</span>
+              <div className="h-px bg-gray-200 flex-1" />
+            </div>
+
             <form onSubmit={handleLogin} className="w-full space-y-4">
               <input
                 type="text"
                 value={inputName}
                 onChange={(e) => setInputName(e.target.value)}
-                placeholder="What's your name?"
+                placeholder="Enter your guest name"
                 className="search-input py-4 text-lg text-center"
-                autoFocus
               />
               <button 
                 type="submit" 
                 className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
               >
-                Let's Go
+                Start as Guest
               </button>
             </form>
           </div>
@@ -158,8 +366,21 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="sidebar-overlay-mobile"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <aside className="sidebar flex flex-col">
+      <aside className={`sidebar flex flex-col ${isSidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="user-profile">
             <div className="avatar bg-indigo-600">
@@ -170,6 +391,10 @@ export default function App() {
               <span className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider">Online</span>
             </div>
           </div>
+          <button onClick={copyInviteLink} className="p-2 hover:bg-gray-100 rounded-full text-indigo-600 transition-colors mr-2 flex items-center gap-2 px-3">
+            <Search size={16} />
+            <span className="text-xs font-bold uppercase">Invite</span>
+          </button>
           <button onClick={handleLogout} className="p-2 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
             <LogOut size={20} />
           </button>
@@ -194,17 +419,17 @@ export default function App() {
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -10 }}
-                className={`user-item ${u.name === userName ? 'bg-indigo-50/50' : ''}`}
+                className={`user-item ${u.id === user.uid ? 'bg-indigo-50/50' : ''}`}
               >
                 <div className="relative">
                   <div className="avatar" style={{ backgroundColor: u.avatarColor }}>
                     {getInitials(u.name)}
                   </div>
-                  <div className="status-dot absolute bottom-0 right-0" />
+                  {u.isOnline && <div className="status-dot absolute bottom-0 right-0 border-2 border-white" />}
                 </div>
                 <div className="flex-1">
-                  <div className="font-semibold text-sm text-gray-900">{u.name} {u.name === userName && "(You)"}</div>
-                  <div className="text-xs text-gray-500">Active now</div>
+                  <div className="font-semibold text-sm text-gray-900 line-clamp-1">{u.name} {u.id === user.uid && "(You)"}</div>
+                  <div className="text-[10px] text-gray-500">{u.isOnline ? "Online" : "Offline"}</div>
                 </div>
               </motion.div>
             ))}
@@ -216,64 +441,114 @@ export default function App() {
       <main className="chat-area">
         <header className="chat-header">
           <div className="chat-header-info">
-            <div className="avatar bg-indigo-600 w-10 h-10">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="md:hidden p-2 -ml-2 hover:bg-gray-100 rounded-full text-indigo-600 transition-colors"
+            >
+              <User size={24} />
+            </button>
+            <div className="avatar bg-indigo-600 w-10 h-10 ring-2 ring-indigo-100 shadow-sm hidden sm:flex">
               EC
             </div>
             <div>
-              <div className="font-bold text-gray-900">Echo Chat Room</div>
-              <div className="typing-indicator">
-                {users.length} members connected
+              <div className="font-bold text-gray-900 leading-tight">Echo Chat Room</div>
+              <div className="typing-indicator flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${user ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`} />
+                <span className="text-xs text-gray-500">{users.filter(u => u.isOnline).length} online</span>
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors">
+          <div className="flex gap-1">
+            <button className="p-2.5 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
               <Search size={20} />
             </button>
-            <button className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors">
+            <button className="p-2.5 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
               <Settings size={20} />
             </button>
-            <button className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors">
+            <button className="p-2.5 hover:bg-gray-100 rounded-full text-gray-400 transition-colors">
               <MoreVertical size={20} />
             </button>
           </div>
         </header>
 
         <div className="messages-container">
-          <AnimatePresence mode="popLayout">
-            {messages.map((msg) => (
-              <motion.div
-                key={msg.id}
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                layout
-                className={`message ${msg.senderName === userName ? 'sent' : 'received'}`}
-              >
-                {msg.senderName !== userName && (
-                  <div className="text-[10px] font-bold mb-1" style={{ color: msg.senderColor }}>
-                    {msg.senderName}
-                  </div>
-                )}
-                <div>{msg.text}</div>
-                <span className="msg-meta text-right">{msg.timestamp}</span>
-              </motion.div>
-            ))}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {messages.map((msg, idx) => {
+              const showDate = idx === 0 || 
+                (messages[idx-1].timestamp && msg.timestamp && 
+                 new Date(messages[idx-1].timestamp.seconds * 1000).toDateString() !== new Date(msg.timestamp.seconds * 1000).toDateString());
+
+              return (
+                <React.Fragment key={msg.id}>
+                  {showDate && (
+                    <div className="flex justify-center my-6">
+                      <span className="px-3 py-1 bg-gray-100/80 backdrop-blur-sm text-[10px] font-bold text-gray-500 rounded-full uppercase tracking-widest border border-gray-200/50">
+                        {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : "Today"}
+                      </span>
+                    </div>
+                  )}
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    layout
+                    className={`message ${msg.senderId === user.uid ? 'sent' : 'received'}`}
+                  >
+                    {msg.senderId !== user.uid && (
+                      <div className="text-[10px] font-bold mb-1 opacity-80" style={{ color: msg.senderColor }}>
+                        {msg.senderName}
+                      </div>
+                    )}
+                    <div className="leading-relaxed break-words">{msg.text}</div>
+                    <div className="flex items-center justify-end gap-1 mt-1">
+                      <span className="msg-meta text-[9px] translate-y-0.5">{formatTimestamp(msg.timestamp)}</span>
+                      {msg.senderId === user.uid && (
+                        <CheckCheck size={12} className="text-indigo-400" />
+                      )}
+                    </div>
+                  </motion.div>
+                </React.Fragment>
+              );
+            })}
           </AnimatePresence>
           <div ref={messagesEndRef} />
         </div>
 
-        <form onSubmit={handleSendMessage} className="input-area">
-          <input
-            type="text"
-            className="message-input"
-            placeholder="Type your message here..."
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-          />
-          <button type="submit" disabled={!message.trim()} className="send-btn group disabled:opacity-50 transition-opacity">
-            <Send className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" size={20} />
-          </button>
-        </form>
+        <div className="input-area-wrapper p-4 bg-white/80 backdrop-blur-md border-t border-gray-100 mb-safe">
+          <form onSubmit={handleSendMessage} className="input-area max-w-4xl mx-auto flex gap-2 items-end">
+            <div className="flex-1 bg-gray-50 rounded-2xl border border-gray-200 p-1 flex items-end">
+              <button type="button" className="p-3 text-gray-400 hover:text-indigo-600 transition-colors">
+                <Smile size={22} />
+              </button>
+              <textarea
+                rows={1}
+                className="flex-1 bg-transparent border-none focus:ring-0 py-3 px-1 text-[15px] resize-none max-h-32"
+                placeholder="Type your message here..."
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  e.target.style.height = 'inherit';
+                  e.target.style.height = `${e.target.scrollHeight}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage(e);
+                  }
+                }}
+              />
+              <button type="button" className="p-3 text-gray-400 hover:text-indigo-600 transition-colors">
+                <ImageIcon size={22} />
+              </button>
+            </div>
+            <button 
+              type="submit" 
+              disabled={!message.trim()} 
+              className="send-btn bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 mb-0.5 shadow-lg shadow-indigo-100"
+            >
+              <Send size={20} />
+            </button>
+          </form>
+        </div>
       </main>
     </div>
   );

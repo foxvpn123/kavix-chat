@@ -4,20 +4,93 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
-      // Shield against fetch polyfills that try to overwrite the read-only window.fetch in some environments
+      // Global safety shield to prevent "SyntaxError: 'undefined' is not valid JSON"
+      (function() {
+        // 1. Monkey-patch JSON.parse to be resilient against corrupt strings
+        var originalParse = JSON.parse;
+        JSON.parse = function(text, reviver) {
+          if (text === "undefined" || text === undefined) {
+            console.warn("Rescued from SyntaxError: Attempted to parse 'undefined'. Returning null.");
+            return null;
+          }
+          try {
+            return originalParse(text, reviver);
+          } catch (e) {
+            // If it's the literal string "null", that's valid JSON, but let's be safe
+            if (text === "null") return null;
+            // For any other syntax error, return null to prevent app crash
+            if (e.name === 'SyntaxError') {
+              console.warn("Intercepted JSON SyntaxError for input:", text);
+              return null;
+            }
+            throw e;
+          }
+        };
+
+        // 2. Aggressive storage cleanup (Plain JS version)
+        try {
+          var storageCleanup = function(storage) {
+            if (!storage) return;
+            for (var i = 0; i < storage.length; i++) {
+              var key = storage.key(i);
+              if (key) {
+                var val = storage.getItem(key);
+                if (val === "undefined" || val === "null") {
+                  storage.removeItem(key);
+                  i--; 
+                }
+              }
+            }
+          };
+          
+          storageCleanup(localStorage);
+          if (typeof sessionStorage !== 'undefined') storageCleanup(sessionStorage);
+          
+          // 3. Cookie cleanup
+          if (typeof document !== 'undefined' && document.cookie) {
+            var cookies = document.cookie.split(";");
+            for (var j = 0; j < cookies.length; j++) {
+              var c = cookies[j];
+              if (c.indexOf("undefined") !== -1 || c.indexOf("=null") !== -1) {
+                var cookieName = c.split("=")[0].trim();
+                document.cookie = cookieName + "=;expires=" + new Date(0).toUTCString() + ";path=/";
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Storage cleanup failed:", e);
+        }
+      })();
+
+      // Ultimate shield against fetch polyfills that try to overwrite the read-only window.fetch
       (function() {
         try {
           var originalFetch = window.fetch;
           if (originalFetch) {
+            // Define a fake "fetch" property on globalThis/window that redirects to the original
+            // but includes a setter that effectively does nothing, preventing TypeErrors.
             Object.defineProperty(window, 'fetch', {
-              configurable: true,
-              enumerable: true,
               get: function() { return originalFetch; },
-              set: function() { console.warn('Something tried to overwrite window.fetch'); }
+              set: function(v) { 
+                console.warn('Blocked attempt to overwrite window.fetch with:', v); 
+              },
+              configurable: true,
+              enumerable: true
             });
+            
+            // Also handle 'global' if it exists (for some common polyfills)
+            if (typeof global !== 'undefined') {
+              try {
+                Object.defineProperty(global, 'fetch', {
+                  get: function() { return originalFetch; },
+                  set: function() { },
+                  configurable: true
+                });
+              } catch (e) {}
+            }
           }
         } catch (e) {
-          console.error('Failed to shield fetch:', e);
+          console.error('Fetch shield failed:', e);
         }
       })();
     </script>

@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and presence information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "lastSeen": { "type": "number" },
+        "isOnline": { "type": "boolean" },
+        "avatarColor": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A chat message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderColor": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "type": { "type": "string", "enum": ["text", "image"] },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["senderId", "senderName", "text", "timestamp"]
+    },
+    "Presence": {
+      "title": "Presence",
+      "description": "Real-time presence tracking",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "lastActive": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered users"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Global chat messages"
+    },
+    "/rooms/{roomId}/typing/{userId}": {
+      "schema": "Presence",
+      "description": "Typing indicators"
+    }
+  }
+}

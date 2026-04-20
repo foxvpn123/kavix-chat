@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitives ---
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // --- Validation Blueprints ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'lastSeen', 'isOnline', 'avatarColor'])
+          && data.keys().size() == 5
+          && data.id is string && data.id == request.auth.uid
+          && data.name is string && data.name.size() >= 1 && data.name.size() <= 50
+          && data.lastSeen is number
+          && data.isOnline is bool
+          && data.avatarColor is string && data.avatarColor.size() == 7;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'senderName', 'senderColor', 'text', 'timestamp', 'type'])
+          && (data.keys().size() == 6 || (data.keys().size() == 7 && data.keys().hasAll(['imageUrl'])))
+          && data.senderId is string && data.senderId == request.auth.uid
+          && data.senderName is string && data.senderName.size() >= 1 && data.senderName.size() <= 50
+          && data.senderColor is string && data.senderColor.size() == 7
+          && data.text is string && data.text.size() <= 5000
+          && data.timestamp is timestamp && data.timestamp == request.time
+          && data.type in ['text', 'image'];
+    }
+
+    // --- Path Rules ---
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // In a real app we might paginate.
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming())
+                   && incoming().id == existing().id; // ID is immortal
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidMessage(incoming());
+      allow delete: if isSignedIn() && existing().senderId == request.auth.uid;
+      // No updates allowed to messages (Telegram/WhatsApp allow it, but for now we'll stick to immutable for simplicity)
+    }
+
+    match /rooms/{roomId}/typing/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(userId);
+    }
+  }
+}
