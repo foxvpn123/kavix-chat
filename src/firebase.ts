@@ -45,7 +45,6 @@ const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreData
   : "(default)";
 
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true, // Bypass WebSocket blocks on mobile networks
   localCache: memoryLocalCache() // Avoid disk I/O hangs on mobile devices
 }, dbId);
 

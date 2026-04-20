@@ -239,28 +239,33 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
-    // Max timeout for first connection (45 seconds)
+    // Maximum timeout for mobile networks (60 seconds)
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Database response took too long. This usually happens on restricted networks. Switch to LTE or a different WiFi.")), 45000)
+      setTimeout(() => reject(new Error("Database response took too long. This usually happens on slow 3G/LTE or restricted WiFi.")), 60000)
     );
 
     try {
-      setRegistrationTask("Initializing Secure Link...");
+      setRegistrationTask("Initiating Secure Session...");
       
-      // Wait for auth to be ready if it isn't yet
-      if (!user) {
-        console.log("Auth not ready, waiting...");
+      // Wait for auth to be strictly ready
+      if (!auth.currentUser) {
+        console.log("Waiting for Auth...");
         let attempts = 0;
-        while (!auth.currentUser && attempts < 10) {
+        while (!auth.currentUser && attempts < 15) {
           await new Promise(r => setTimeout(r, 1000));
           attempts++;
         }
       }
 
-      console.log("Starting registration for handle:", handle);
-      const userRef = doc(db, "users", handle);
+      if (!auth.currentUser) {
+        throw new Error("Unable to connect to the Secure Link. Please ensure your Internet/Data is on and try again.");
+      }
+
+      const currentHandle = handle.toLowerCase().trim();
+      console.log("Starting registration for:", currentHandle);
+      const userRef = doc(db, "users", currentHandle);
       
-      setRegistrationTask("Verifying Unique ID...");
+      setRegistrationTask("Verifying Handle...");
       const userSnap = await Promise.race([
         getDocFromServer(userRef),
         timeoutPromise
@@ -302,9 +307,9 @@ export default function App() {
       }
     } catch (err: any) {
       console.error("CRITICAL REGISTRATION ERROR:", err);
-      // Detailed error for debugging on phone
-      const errorMsg = err.code ? `Error: ${err.code} - ${err.message}` : err.message;
-      setAuthError(errorMsg || "Registration failed. Check network.");
+      // Detailed error for debugging on phone - v1.0.7 adds code check
+      const errorMsg = err.code ? `[Code: ${err.code}] ${err.message}` : (err.message || "Something went wrong.");
+      setAuthError(errorMsg);
     } finally {
       setIsAuthLoading(false);
     }
@@ -410,7 +415,7 @@ export default function App() {
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.6 Final-HARDENED</p>
+              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.7 Extreme-FORCE</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">
