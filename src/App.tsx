@@ -19,8 +19,7 @@ import {
   Timestamp,
   where,
   increment,
-  updateDoc,
-  getDocFromServer
+  updateDoc
 } from "./firebase";
 
 // --- Types ---
@@ -240,41 +239,29 @@ export default function App() {
     setAuthError(null);
 
     try {
-      setRegistrationTask("Connecting to IXO Network...");
-      
-      // Ensure we have an auth session, try to sign in if not
+      // 1. Ensure Auth
       if (!auth.currentUser) {
-        console.log("No current user, initiating anonymous sign-in...");
         await signInAnonymously(auth);
-        
-        // Brief wait for state propagation
-        let waitAttempts = 0;
-        while (!auth.currentUser && waitAttempts < 5) {
-          await new Promise(r => setTimeout(r, 500));
-          waitAttempts++;
-        }
       }
 
       const currentHandle = handle.toLowerCase().trim();
-      console.log("Starting registration for:", currentHandle);
       const userRef = doc(db, "users", currentHandle);
       
-      setRegistrationTask("Verifying Unique Handle...");
-      // Using getDocFromServer to force direct network check, bypassing stale cache
-      const userSnap = await getDocFromServer(userRef);
+      // 2. Check Uniqueness
+      const userSnap = await getDoc(userRef);
 
       if (userSnap.exists()) {
-        setAuthError("This ID is already taken. Try another one!");
+        setAuthError("Handle already taken. Try adding a number!");
         setIsAuthLoading(false);
         return;
       }
 
-      setRegistrationTask("Creating your profile...");
+      // 3. Simple Create
       const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
       const profileData = {
-        id: user?.uid || "guest_" + Math.random().toString(36).substr(2, 9),
-        handle,
-        name,
+        id: auth.currentUser?.uid || "u_" + Date.now(),
+        handle: currentHandle,
+        name: name.trim(),
         avatarColor: color,
         isOnline: true,
         lastSeen: Date.now()
@@ -282,23 +269,20 @@ export default function App() {
 
       await setDoc(userRef, profileData);
 
-      console.log("Registration successful!");
-      localStorage.setItem("echochat_handle", handle);
-      localStorage.setItem("echochat_username", name);
+      localStorage.setItem("echochat_handle", currentHandle);
+      localStorage.setItem("echochat_username", name.trim());
       localStorage.setItem("echochat_color", color);
       
-      setMyHandle(handle);
-      setMyName(name);
+      setMyHandle(currentHandle);
+      setMyName(name.trim());
       
       const hasSeen = localStorage.getItem("echochat_seen_letter");
       if (hasSeen !== "true") {
         setShowLetter(true);
       }
     } catch (err: any) {
-      console.error("CRITICAL REGISTRATION ERROR:", err);
-      // v1.0.9 PRO-MOBILE: Showing raw firebase errors for debugging
-      const errorMsg = err.code ? `[Firebase Error Code: ${err.code}] ${err.message}` : (err.message || "Network error. Please try again.");
-      setAuthError(errorMsg);
+      console.error("Join error:", err);
+      setAuthError("Connection Issue. Please check signal and try again.");
     } finally {
       setIsAuthLoading(false);
     }
@@ -404,7 +388,7 @@ export default function App() {
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.9 PRO-MOBILE</p>
+              <p className="text-[8px] text-gray-400 mt-2 uppercase tracking-[0.2em] font-bold">Build v1.1.0 Universal-LITE</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">
@@ -434,20 +418,21 @@ export default function App() {
               <button 
                 type="submit" 
                 disabled={isAuthLoading}
-                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 active:scale-95 disabled:opacity-50"
+                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold text-lg hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 active:scale-95 disabled:opacity-50 flex items-center justify-center gap-3"
               >
-                {isAuthLoading ? (registrationTask || "CONNECTING...") : "JOIN THE CHAT"}
+                {isAuthLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>CONNECTING...</span>
+                  </>
+                ) : "JOIN THE CHAT"}
               </button>
-
-              {isAuthLoading && registrationTask && (
-                <div className="flex flex-col items-center gap-2 mt-2">
-                  <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-[10px] text-indigo-400 font-medium uppercase tracking-widest animate-pulse">
-                    {registrationTask}
-                  </p>
-                </div>
-              )}
             </form>
+            
+            <div className="flex items-center gap-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-2">
+               <div className={`w-2 h-2 rounded-full ${user ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-300'}`} />
+               {user ? "System Online" : "Connecting to Link..."}
+            </div>
           </div>
         </motion.div>
 

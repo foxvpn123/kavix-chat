@@ -24,9 +24,6 @@ import {
   where,
   increment,
   updateDoc,
-  initializeFirestore,
-  memoryLocalCache,
-  getDocFromServer
 } from 'firebase/firestore';
 // @ts-ignore
 import firebaseConfig from '../firebase-applet-config.json';
@@ -39,12 +36,8 @@ if (!firebaseConfig.authDomain) {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Use the simplest Firestore initialization for maximum compatibility
-const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim() !== "") 
-  ? firebaseConfig.firestoreDatabaseId 
-  : undefined;
-
-export const db = getFirestore(app, dbId);
+// Explicitly use the project's specific database ID for absolute reliability in APKs
+export const db = getFirestore(app, "ai-studio-4c336a6c-0741-4cac-948b-5450dbc65c54");
 
 export { 
   signInAnonymously, 
@@ -61,7 +54,6 @@ export {
   doc,
   setDoc,
   getDoc,
-  getDocFromServer,
   limit,
   Timestamp,
   deleteDoc,
