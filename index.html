@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Shield against fetch polyfills that try to overwrite the read-only window.fetch in some environments
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          if (originalFetch) {
+            Object.defineProperty(window, 'fetch', {
+              configurable: true,
+              enumerable: true,
+              get: function() { return originalFetch; },
+              set: function() { console.warn('Something tried to overwrite window.fetch'); }
+            });
+          }
+        } catch (e) {
+          console.error('Failed to shield fetch:', e);
+        }
+      })();
+    </script>
+    <title>EchoChat</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

@@ -1,0 +1,6 @@
+{
+  "name": "EchoChat",
+  "description": "A real-time, zero-auth chat application with a modern split-screen interface inspired by WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
