@@ -48,7 +48,10 @@ const avatarColors = [
 export default function App() {
   const [user, setUser] = useState<any>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isGuestLoading, setIsGuestLoading] = useState(false);
+  const [showTroubleshooter, setShowTroubleshooter] = useState(false);
+  const [authResetCounter, setAuthResetCounter] = useState(0);
   const [userName, setUserName] = useState<string | null>(() => {
     try {
       // Defensive cleanup
@@ -78,39 +81,59 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Handle Auth
+  // 1. Core Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+    console.log("Setting up auth listener...");
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      console.log("Auth state changed:", u ? `User: ${u.uid}` : "No user");
+      setUser(u);
+      
+      // If we find a user, clear any loading states
       if (u) {
-        setUser(u);
-        const savedName = localStorage.getItem("echochat_username");
-        const effectiveName = userName || u.displayName || savedName;
-        
-        if (effectiveName) {
-          if (!userName) setUserName(effectiveName);
-          if (!savedName) localStorage.setItem("echochat_username", effectiveName);
-          
-          try {
-            // Update profile in Firestore
-            const userRef = doc(db, "users", u.uid);
-            await setDoc(userRef, {
-              id: u.uid,
-              name: effectiveName,
-              lastSeen: Date.now(),
-              isOnline: true,
-              avatarColor: localStorage.getItem("echochat_color") || avatarColors[Math.floor(Math.random() * avatarColors.length)]
-            }, { merge: true });
-          } catch (e) {
-            console.warn("Could not sync user profile to Firestore (check rules/quota):", e);
-          }
-        }
-      } else {
-        setUser(null);
+        setIsGoogleLoading(false);
+        setIsGuestLoading(false);
       }
     });
 
     return () => unsubscribe();
-  }, [userName]);
+  }, [authResetCounter]);
+
+  // 2. Username Resolver (Runs when user is detected but username is missing)
+  useEffect(() => {
+    if (user && !userName) {
+      const savedName = localStorage.getItem("echochat_username");
+      const effectiveName = user.displayName || savedName || `User_${user.uid.substring(0, 5)}`;
+      
+      console.log("Resolving username:", effectiveName);
+      setUserName(effectiveName);
+      
+      if (!savedName) {
+        localStorage.setItem("echochat_username", effectiveName);
+      }
+    }
+  }, [user, userName]);
+
+  // 3. Profile Synchronizer (Runs when both user and username are ready)
+  useEffect(() => {
+    if (user && userName) {
+      const syncProfile = async () => {
+        try {
+          const userRef = doc(db, "users", user.uid);
+          await setDoc(userRef, {
+            id: user.uid,
+            name: userName,
+            lastSeen: Date.now(),
+            isOnline: true,
+            avatarColor: localStorage.getItem("echochat_color") || avatarColors[Math.floor(Math.random() * avatarColors.length)]
+          }, { merge: true });
+          console.log("Firestore profile synchronized");
+        } catch (e) {
+          console.warn("Failed to sync profile:", e);
+        }
+      };
+      syncProfile();
+    }
+  }, [user, userName]);
 
   // Handle Presence and Typing
   useEffect(() => {
@@ -171,75 +194,75 @@ export default function App() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isGuestLoading || isGoogleLoading) return;
+    
     const trimmed = inputName.trim();
     if (trimmed && trimmed !== "undefined") {
+      setAuthError(null);
+      setIsGuestLoading(true);
+      
       const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
       localStorage.setItem("echochat_username", trimmed);
       localStorage.setItem("echochat_color", color);
-      setUserName(trimmed);
       
+      const timeout = setTimeout(() => {
+        if (isGuestLoading) {
+          setIsGuestLoading(false);
+          setAuthError("Guest sign-in is taking too long. Please try again or refresh.");
+        }
+      }, 12000);
+
       try {
         await signInAnonymously(auth);
       } catch (err: any) {
-        console.error("Auth error:", err);
-        if (err.code === 'auth/admin-restricted-operation') {
-          setAuthError("Anonymous sign-in is disabled. Please enable it in the Firebase console or use a different auth method.");
-        } else {
-          setAuthError(err.message || "An authentication error occurred.");
-        }
-      }
-
-      // Check if user has seen the letter
-      const hasSeen = localStorage.getItem("echochat_seen_letter");
-      if (hasSeen !== "true") {
-        setShowLetter(true);
+        console.error("Guest Auth error:", err);
+        setAuthError(err.message || "Guest sign-in failed.");
+        setIsGuestLoading(false);
+      } finally {
+        clearTimeout(timeout);
       }
     }
   };
 
   const handleGoogleSignIn = async () => {
-    if (isAuthLoading) return;
+    if (isGoogleLoading || isGuestLoading) return;
     setAuthError(null);
-    setIsAuthLoading(true);
+    setIsGoogleLoading(true);
 
     const provider = new GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
 
+    const timeout = setTimeout(() => {
+      if (isGoogleLoading) {
+        setIsGoogleLoading(false);
+        setShowTroubleshooter(true);
+        setAuthError("Google sign-in timed out. If no window appeared, check your popup blocker.");
+      }
+    }, 25000);
+
     try {
-      const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      const displayName = user.displayName || "Unknown User";
-      
-      localStorage.setItem("echochat_username", displayName);
-      if (!localStorage.getItem("echochat_color")) {
-        const color = avatarColors[Math.floor(Math.random() * avatarColors.length)];
-        localStorage.setItem("echochat_color", color);
-      }
-      
-      setUserName(displayName);
-      
-      // Check if user has seen the letter
-      const hasSeen = localStorage.getItem("echochat_seen_letter");
-      if (hasSeen !== "true") {
-        setShowLetter(true);
-      }
+      await signInWithPopup(auth, provider);
     } catch (err: any) {
       console.error("Google Auth error:", err);
-      
       if (err.code === 'auth/popup-blocked') {
-        setAuthError("Popup blocked! Please allow popups for this site in your browser settings to sign in with Google.");
+        setAuthError("Popup blocked! Enable popups to sign in with Google.");
       } else if (err.code === 'auth/cancelled-popup-request' || err.code === 'auth/popup-closed-by-user') {
-        setAuthError("Sign-in process was cancelled. Please try again.");
-      } else if (err.code === 'auth/operation-not-allowed') {
-        setAuthError("Google Sign-in is not enabled in your Firebase console. Please go to Auth > Sign-in method and enable Google.");
-      } else if (err.code === 'auth/auth-domain-config-required') {
-        setAuthError("Firebase Auth Domain missing! Please ensure your project is fully provisioned.");
+        setAuthError("Sign-in cancelled.");
       } else {
-        setAuthError(err.message || "An error occurred during Google Sign-in.");
+        setAuthError(err.message || "Google login failed.");
       }
+      setIsGoogleLoading(false);
     } finally {
-      setIsAuthLoading(false);
+      clearTimeout(timeout);
     }
+  };
+
+  const forceResetAuth = () => {
+    setIsGoogleLoading(false);
+    setIsGuestLoading(false);
+    setAuthError(null);
+    setShowTroubleshooter(false);
+    setAuthResetCounter(prev => prev + 1);
   };
 
   const handleCloseLetter = () => {
@@ -323,16 +346,33 @@ export default function App() {
 
             <button 
               onClick={handleGoogleSignIn}
-              disabled={isAuthLoading}
-              className={`w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm ${isAuthLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+              disabled={isGoogleLoading || isGuestLoading}
+              className={`w-full py-4 bg-white border border-gray-200 text-gray-700 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-gray-50 transition-colors shadow-sm ${(isGoogleLoading || isGuestLoading) ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              {isAuthLoading ? (
+              {isGoogleLoading ? (
                 <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
               ) : (
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="20" height="20" alt="Google" referrerPolicy="no-referrer" />
               )}
-              {isAuthLoading ? "Connecting..." : "Continue with Google"}
+              {isGoogleLoading ? "Connecting..." : "Continue with Google"}
             </button>
+
+            {showTroubleshooter && (
+              <div className="flex flex-col items-center gap-2">
+                <button 
+                  onClick={forceResetAuth}
+                  className="text-xs text-indigo-600 font-bold hover:underline"
+                >
+                  Sign-in stuck? Click here to try again.
+                </button>
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="text-[10px] text-gray-400 font-medium hover:underline"
+                >
+                  Or refresh the entire page.
+                </button>
+              </div>
+            )}
 
             <div className="flex items-center gap-4 w-full">
               <div className="h-px bg-gray-200 flex-1" />
@@ -350,9 +390,13 @@ export default function App() {
               />
               <button 
                 type="submit" 
-                className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100"
+                disabled={isGuestLoading || isGoogleLoading || !inputName.trim()}
+                className={`w-full py-4 bg-indigo-600 text-white rounded-xl font-bold text-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-100 flex items-center justify-center gap-2 ${(isGuestLoading || isGoogleLoading) ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
-                Start as Guest
+                {isGuestLoading ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : null}
+                {isGuestLoading ? "Joining..." : "Start as Guest"}
               </button>
             </form>
           </div>
@@ -499,20 +543,22 @@ export default function App() {
                  new Date(messages[idx-1].timestamp.seconds * 1000).toDateString() !== new Date(msg.timestamp.seconds * 1000).toDateString());
 
               return (
-                <React.Fragment key={msg.id}>
+                <motion.div 
+                  key={msg.id}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className={`flex flex-col ${msg.senderId === user.uid ? 'items-end' : 'items-start'}`}
+                >
                   {showDate && (
-                    <div className="flex justify-center my-6">
-                      <span className="px-3 py-1 bg-gray-100/80 backdrop-blur-sm text-[10px] font-bold text-gray-500 rounded-full uppercase tracking-widest border border-gray-200/50">
+                    <div className="flex justify-center w-full my-6">
+                      <span className="px-3 py-1 bg-gray-100/80 backdrop-blur-sm text-[10px] font-bold text-gray-500 rounded-full uppercase tracking-widest border border-gray-200/50 text-center">
                         {msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) : "Today"}
                       </span>
                     </div>
                   )}
-                  <motion.div
-                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    layout
-                    className={`message ${msg.senderId === user.uid ? 'sent' : 'received'}`}
-                  >
+                  <div className={`message ${msg.senderId === user.uid ? 'sent' : 'received'}`}>
                     {msg.senderId !== user.uid && (
                       <div className="text-[10px] font-bold mb-1 opacity-80" style={{ color: msg.senderColor }}>
                         {msg.senderName}
@@ -525,8 +571,8 @@ export default function App() {
                         <CheckCheck size={12} className="text-indigo-400" />
                       )}
                     </div>
-                  </motion.div>
-                </React.Fragment>
+                  </div>
+                </motion.div>
               );
             })}
           </AnimatePresence>
