@@ -1,6 +1,6 @@
 {
   "name": "IXO",
-  "description": "A high-performance real-time messaging app with WhatsApp styling, optimized for mobile use with persistent state and offline support.",
+  "description": "IXO is a worldwide real-time messaging network. High-performance, secure, and optimized for global mobile users with zero latency.",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": []
 }

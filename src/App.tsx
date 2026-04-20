@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Send, Search, LogOut, User, Smile, Image as ImageIcon, CheckCheck, Copy, Users, MessageSquare, ArrowLeft, Camera } from "lucide-react";
+import { Send, Search, LogOut, User, Smile, Image as ImageIcon, CheckCheck, Copy, Users, MessageSquare, ArrowLeft, Camera, Globe } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   auth, 
@@ -63,7 +63,6 @@ export default function App() {
   const [myName, setMyName] = useState<string | null>(localStorage.getItem("echochat_username"));
   
   // UI States
-  const [activeTab, setActiveTab] = useState<"chats" | "users">("chats");
   const [selectedUser, setSelectedUser] = useState<ChatUser | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchHandle, setSearchHandle] = useState("");
@@ -76,14 +75,16 @@ export default function App() {
   const [inputName, setInputName] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [registrationTask, setRegistrationTask] = useState<string>("");
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(localStorage.getItem("echochat_avatar"));
 
   // Chat Data
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
+  const [globalMessages, setGlobalMessages] = useState<Message[]>([]);
   const [allUsers, setAllUsers] = useState<ChatUser[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const [activeTab, setActiveTab] = useState<'chats' | 'explore' | 'global'>('global');
 
   // --- 1. Authentication & Presence ---
   useEffect(() => {
@@ -123,10 +124,21 @@ export default function App() {
   }, [user, myHandle]);
 
   // --- 2. Data Synchronization ---
+  // Global Hub Messages
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, "global_messages"), orderBy("timestamp", "desc"), limit(100));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Message)).reverse();
+      setGlobalMessages(list);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
   // Fetch All Users (Discovery)
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(50));
+    const q = query(collection(db, "users"), orderBy("lastSeen", "desc"), limit(200));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(d => {
         const data = d.data();
@@ -294,9 +306,21 @@ export default function App() {
 
     const text = message.trim();
     setMessage("");
-    const convId = [myHandle, selectedUser.handle].sort().join("_");
-
+    
     try {
+      if (selectedUser.handle === 'global') {
+        await addDoc(collection(db, "global_messages"), {
+          senderId: myHandle,
+          senderName: myName,
+          senderColor: localStorage.getItem("echochat_color") || "#6366F1",
+          text,
+          timestamp: serverTimestamp(),
+          type: 'text'
+        });
+        return;
+      }
+
+      const convId = [myHandle, selectedUser.handle].sort().join("_");
       // 1. Add Message
       await addDoc(collection(db, "conversations", convId, "messages"), {
         senderId: myHandle,
@@ -387,8 +411,7 @@ export default function App() {
             </div>
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
-              <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-400 mt-2 uppercase tracking-[0.2em] font-bold">Build v1.1.0 Universal-LITE</p>
+              <p className="text-gray-500 mt-2">Join the worldwide messaging network</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">
@@ -429,9 +452,9 @@ export default function App() {
               </button>
             </form>
             
-            <div className="flex items-center gap-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-2">
-               <div className={`w-2 h-2 rounded-full ${user ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-gray-300'}`} />
-               {user ? "System Online" : "Connecting to Link..."}
+            <div className="flex items-center gap-2 text-[10px] text-indigo-500 font-bold uppercase tracking-widest mt-2 bg-indigo-50/50 px-3 py-1.5 rounded-full border border-indigo-100/50">
+               <div className={`w-2 h-2 rounded-full ${user ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)]' : 'bg-gray-300 animate-pulse'}`} />
+               {user ? "Globally Verified • Cloud Online" : "Locating Global Link..."}
             </div>
           </div>
         </motion.div>
@@ -518,16 +541,34 @@ export default function App() {
         </div>
 
         <div className="flex bg-white">
-           <button onClick={() => setActiveTab('chats')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'chats' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
-              CHATS
+           <button onClick={() => setActiveTab('global')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'global' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
+              GLOBAL
            </button>
-           <button onClick={() => setActiveTab('users')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'users' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
+           <button onClick={() => setActiveTab('chats')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'chats' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
+              MY CHATS
+           </button>
+           <button onClick={() => setActiveTab('explore')} className={`flex-1 py-3 text-[13px] font-semibold transition-all border-b-[3px] ${activeTab === 'explore' ? 'text-wa-teal border-wa-teal' : 'text-[#667781] border-transparent hover:bg-gray-50'}`}>
               EXPLORE
            </button>
         </div>
 
         <div className="user-list">
-          {activeTab === 'users' ? (
+          {activeTab === 'global' ? (
+             <motion.div 
+               layout 
+               onClick={() => { setSelectedUser({ id: 'global', handle: 'global', name: 'Global IXO Hub', avatarColor: '#4f46e5' } as any); }}
+               className={`user-item ${selectedUser?.handle === 'global' ? 'active' : ''}`}
+             >
+               <div className="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-lg">
+                 <Globe size={24} />
+               </div>
+               <div className="flex-1">
+                 <div className="font-semibold text-[16px] text-[#111b21]">Global IXO Hub</div>
+                 <div className="text-[13px] text-gray-500 italic">Everyone is here!</div>
+               </div>
+               <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse mr-1" />
+             </motion.div>
+          ) : activeTab === 'explore' ? (
             allUsers.filter(u => u.handle !== myHandle).map(u => (
               <motion.div 
                 key={u.handle} 
@@ -648,7 +689,11 @@ export default function App() {
              
              {selectedUser && (
                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  {selectedUser.avatarUrl ? (
+                  {selectedUser.handle === 'global' ? (
+                    <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white shadow-sm ring-1 ring-white/50">
+                      <Globe size={20} />
+                    </div>
+                  ) : selectedUser.avatarUrl ? (
                     <img src={selectedUser.avatarUrl} alt="User" className="w-10 h-10 rounded-full object-cover" referrerPolicy="no-referrer" />
                   ) : (
                     <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ backgroundColor: selectedUser.avatarColor }}>{getInitials(selectedUser.name)}</div>
@@ -656,7 +701,7 @@ export default function App() {
                   <div className="min-w-0">
                      <div className="font-semibold text-[#111b21] truncate">{selectedUser.name}</div>
                      <div className="text-[12px] text-[#667781] truncate">
-                        {selectedUser.isOnline ? "online" : "last seen recently"}
+                        {selectedUser.handle === 'global' ? "Everyone is here!" : (selectedUser.isOnline ? "online" : "last seen recently")}
                      </div>
                   </div>
                </div>
@@ -668,11 +713,14 @@ export default function App() {
            )}
         </header>
 
-        <div className="messages-container pb-24">
+        <div className="messages-container pb-24 px-4 pt-4">
           {selectedUser ? (
             <AnimatePresence mode="popLayout" initial={false}>
-              {messages.map((msg) => (
-                <motion.div key={msg.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-col ${msg.senderId === myHandle ? 'items-end' : 'items-start'}`}>
+              {(selectedUser.handle === 'global' ? globalMessages : messages).map((msg) => (
+                <motion.div key={msg.id} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-col mb-3 ${msg.senderId === myHandle ? 'items-end' : 'items-start'}`}>
+                   {selectedUser.handle === 'global' && msg.senderId !== myHandle && (
+                     <div className="text-[10px] font-bold text-gray-400 mb-1 ml-3 uppercase tracking-wider">{msg.senderName}</div>
+                   )}
                    <div className={`message ${msg.senderId === myHandle ? 'sent' : 'received'}`}>
                       <div className="leading-relaxed">{msg.text}</div>
                       <div className="text-[8px] opacity-50 mt-1 flex justify-end items-center gap-1">
