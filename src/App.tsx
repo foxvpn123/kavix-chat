@@ -19,7 +19,8 @@ import {
   Timestamp,
   where,
   increment,
-  updateDoc
+  updateDoc,
+  getDocFromServer
 } from "./firebase";
 
 // --- Types ---
@@ -238,9 +239,9 @@ export default function App() {
     setIsAuthLoading(true);
     setAuthError(null);
 
-    // Increase timeout for slow mobile networks (30 seconds)
+    // Max timeout for first connection (45 seconds)
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Connection is very slow. Please move to a better area (LTE/WiFi) and try again.")), 30000)
+      setTimeout(() => reject(new Error("Database response took too long. This usually happens on restricted networks. Switch to LTE or a different WiFi.")), 45000)
     );
 
     try {
@@ -261,7 +262,7 @@ export default function App() {
       
       setRegistrationTask("Verifying Unique ID...");
       const userSnap = await Promise.race([
-        getDoc(userRef),
+        getDocFromServer(userRef),
         timeoutPromise
       ]) as any;
 
@@ -409,7 +410,7 @@ export default function App() {
             <div className="text-center">
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">IXO Identity</h2>
               <p className="text-gray-500 mt-2">Pick a permanent unique handle</p>
-              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.4 Optimized</p>
+              <p className="text-[8px] text-gray-300 mt-1 uppercase tracking-widest">Build v1.0.6 Final-HARDENED</p>
             </div>
             
             <form onSubmit={handleRegister} className="w-full space-y-4">

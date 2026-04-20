@@ -25,8 +25,8 @@ import {
   increment,
   updateDoc,
   initializeFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager
+  memoryLocalCache,
+  getDocFromServer
 } from 'firebase/firestore';
 // @ts-ignore
 import firebaseConfig from '../firebase-applet-config.json';
@@ -39,13 +39,14 @@ if (!firebaseConfig.authDomain) {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Enable offline persistence for better mobile APK performance
+// Enable ultra-stable connection for mobile APKs
 const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim() !== "") 
   ? firebaseConfig.firestoreDatabaseId 
   : "(default)";
 
 export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({}) 
+  experimentalForceLongPolling: true, // Bypass WebSocket blocks on mobile networks
+  localCache: memoryLocalCache() // Avoid disk I/O hangs on mobile devices
 }, dbId);
 
 export { 
@@ -63,6 +64,7 @@ export {
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
   limit,
   Timestamp,
   deleteDoc,
